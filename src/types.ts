@@ -1,8 +1,12 @@
-import { Timestamp } from 'firebase/firestore';
-
 export type PaymentMethod = 'pix' | 'moeda' | 'debito' | 'credito' | 'boleto';
 export type TransactionType = 'entrada' | 'saida';
 export type AppPage = 'lancamento' | 'lista' | 'relatorios';
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  mxDomain: string;
+}
 
 export interface PaymentMethodOption {
   value: PaymentMethod;
@@ -33,14 +37,14 @@ export interface TransactionRecord {
   paymentMethod: PaymentMethod;
   type: TransactionType;
   dateKey: string; // YYYY-MM-DD
-  createdAt: Timestamp | null;
+  createdAt: string | null;
 }
 
 export interface SavedDescriptionRecord {
   id: string;
   userId: string;
   text: string;
-  lastUsedAt: Timestamp | null;
+  lastUsedAt: string | null;
   usageCount: number;
 }
 
@@ -85,9 +89,10 @@ export function formatDateKeyWithWeekday(dateKey: string): string {
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 }
 
-export function formatTimeFromTimestamp(ts: Timestamp | null): string {
-  if (!ts) return '--:--';
-  const date = ts.toDate();
+export function formatTimeFromTimestamp(iso: string | null): string {
+  if (!iso) return '--:--';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '--:--';
   return new Intl.DateTimeFormat('pt-BR', {
     hour: '2-digit',
     minute: '2-digit',
@@ -107,29 +112,9 @@ export function formatAutoDateNow(date: Date): string {
 export function parseAmountInput(raw: string): number {
   const cleaned = raw.trim().replace(/\s+/g, '');
   if (!cleaned) return NaN;
-  // Support both "1.250,50" and "1250.50" and "1250,50"
   if (cleaned.includes(',')) {
     const normalized = cleaned.replace(/\./g, '').replace(',', '.');
     return Number(normalized);
   }
   return Number(cleaned);
-}
-
-export function slugifyDescriptionId(text: string): string {
-  const trimmed = text.trim();
-  const normalized = trimmed
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9_-]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 80);
-
-  let hash = 2166136261;
-  for (let i = 0; i < trimmed.length; i++) {
-    hash ^= trimmed.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  const suffix = (hash >>> 0).toString(36);
-  return normalized.length > 0 ? `${normalized}_${suffix}` : `desc_${suffix}`;
 }

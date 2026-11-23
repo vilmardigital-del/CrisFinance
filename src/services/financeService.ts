@@ -1,178 +1,145 @@
 import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-} from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
-import {
+  AuthUser,
   getLocalDateKey,
-  MAX_AMOUNT_VALUE,
-  MAX_DESCRIPTION_LENGTH,
   PaymentMethod,
   SavedDescriptionRecord,
-  slugifyDescriptionId,
   TransactionRecord,
   TransactionType,
 } from '../types';
 
-export function subscribeTransactions(
-  userId: string,
-  onData: (items: TransactionRecord[]) => void
-): () => void {
-  const path = `users/${userId}/transactions`;
-  const q = query(
-    collection(db, 'users', userId, 'transactions'),
-    where('userId', '==', userId)
-  );
-
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const records: TransactionRecord[] = snapshot.docs.map((docSnap) => {
-        const data = docSnap.data();
-        return {
-          id: docSnap.id,
-          userId: String(data.userId ?? userId),
-          description: String(data.description ?? ''),
-          amount: Number(data.amount ?? 0),
-          paymentMethod: data.paymentMethod as PaymentMethod,
-          type: data.type as TransactionType,
-          dateKey: String(data.dateKey ?? ''),
-          createdAt: data.createdAt ?? null,
-        };
-      });
-      records.sort((a, b) => {
-        const aMs = a.createdAt ? a.createdAt.toMillis() : Date.now();
-        const bMs = b.createdAt ? b.createdAt.toMillis() : Date.now();
-        return bMs - aMs;
-      });
-      onData(records);
+async function apiRequest<T>(
+  url: string,
+  options: RequestInit & { token?: string } = {}
+): Promise<T> {
+  const { token, headers, ...rest } = options;
+  const response = await fetch(url, {
+    ...rest,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(headers ?? {}),
     },
-    (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
-    }
-  );
+  });
+
+  const data = (await response.json().catch(() => ({}))) as { error?: string } & T;
+  if (!response.ok) {
+    throw new Error(data.error || 'Erro na comunicação com o servidor.');
+  }
+  return data;
 }
 
-export function subscribeSavedDescriptions(
-  userId: string,
-  onData: (items: SavedDescriptionRecord[]) => void
-): () => void {
-  const path = `users/${userId}/descriptions`;
-  const q = query(
-    collection(db, 'users', userId, 'descriptions'),
-    where('userId', '==', userId)
-  );
-
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const records: SavedDescriptionRecord[] = snapshot.docs.map((docSnap) => {
-        const data = docSnap.data();
-        return {
-          id: docSnap.id,
-          userId: String(data.userId ?? userId),
-          text: String(data.text ?? ''),
-          lastUsedAt: data.lastUsedAt ?? null,
-          usageCount: Number(data.usageCount ?? 1),
-        };
-      });
-      records.sort((a, b) => {
-        const aMs = a.lastUsedAt ? a.lastUsedAt.toMillis() : Date.now();
-        const bMs = b.lastUsedAt ? b.lastUsedAt.toMillis() : Date.now();
-        return bMs - aMs;
-      });
-      onData(records);
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
-    }
-  );
+export async function verifyEmailVirtuallyApi(email: string): Promise<{
+  valid: boolean;
+  email?: string;
+  domain?: string;
+  mxHost?: string;
+  error?: string;
+}> {
+  const response = await fetch('/api/auth/verify-email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  return (await response.json()) as {
+    valid: boolean;
+    email?: string;
+    domain?: string;
+    mxHost?: string;
+    error?: string;
+  };
 }
 
-export async function createTransactionWithSavedDescription(params: {
-  userId: string;
-  description: string;
-  amount: number;
-  paymentMethod: PaymentMethod;
-  type: TransactionType;
-}): Promise<void> {
-  const { userId, description, amount, paymentMethod, type } = params;
-
-  const cleanDescription = description.trim().slice(0, MAX_DESCRIPTION_LENGTH);
-  if (!cleanDescription) {
-    throw new Error('Descrição obrigatória.');
-  }
-  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT_VALUE) {
-    throw new Error('Valor inválido.');
-  }
-
-  const now = new Date();
-  const dateKey = getLocalDateKey(now);
-  const roundedAmount = Math.round(amount * 100) / 100;
-
-  const txPath = `users/${userId}/transactions`;
-  try {
-    await addDoc(collection(db, 'users', userId, 'transactions'), {
-      userId,
-      description: cleanDescription,
-      amount: roundedAmount,
-      paymentMethod,
-      type,
-      dateKey,
-      createdAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, txPath);
-  }
-
-  const descId = slugifyDescriptionId(cleanDescription);
-  const descPath = `users/${userId}/descriptions/${descId}`;
-  const descRef = doc(db, 'users', userId, 'descriptions', descId);
-
-  try {
-    const existingSnap = await getDoc(descRef);
-    if (existingSnap.exists()) {
-      const prevCount = Number(existingSnap.data().usageCount ?? 0);
-      await updateDoc(descRef, {
-        lastUsedAt: serverTimestamp(),
-        usageCount: prevCount + 1,
-      });
-    } else {
-      await setDoc(descRef, {
-        userId,
-        text: cleanDescription,
-        lastUsedAt: serverTimestamp(),
-        usageCount: 1,
-      });
-    }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, descPath);
-  }
+export async function registerUserApi(
+  email: string,
+  password: string
+): Promise<{ token: string; user: AuthUser }> {
+  return apiRequest<{ token: string; user: AuthUser }>('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
 }
 
-export async function removeTransaction(userId: string, transactionId: string): Promise<void> {
-  const path = `users/${userId}/transactions/${transactionId}`;
-  try {
-    await deleteDoc(doc(db, 'users', userId, 'transactions', transactionId));
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
+export async function loginUserApi(
+  email: string,
+  password: string
+): Promise<{ token: string; user: AuthUser }> {
+  return apiRequest<{ token: string; user: AuthUser }>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
 }
 
-export async function removeSavedDescription(userId: string, descriptionId: string): Promise<void> {
-  const path = `users/${userId}/descriptions/${descriptionId}`;
-  try {
-    await deleteDoc(doc(db, 'users', userId, 'descriptions', descriptionId));
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+export async function requestPasswordResetApi(email: string): Promise<{
+  ok: boolean;
+  delivery: 'email' | 'virtual';
+  email: string;
+  virtualCode?: string;
+}> {
+  return apiRequest('/api/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function resetPasswordApi(params: {
+  email: string;
+  code: string;
+  newPassword: string;
+}): Promise<{ ok: boolean; token: string; user: AuthUser }> {
+  return apiRequest('/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+export async function fetchTransactionsApi(token: string): Promise<TransactionRecord[]> {
+  const data = await apiRequest<{ items: TransactionRecord[] }>('/api/transactions', {
+    method: 'GET',
+    token,
+  });
+  return data.items;
+}
+
+export async function fetchSavedDescriptionsApi(
+  token: string
+): Promise<SavedDescriptionRecord[]> {
+  const data = await apiRequest<{ items: SavedDescriptionRecord[] }>('/api/descriptions', {
+    method: 'GET',
+    token,
+  });
+  return data.items;
+}
+
+export async function createTransactionApi(
+  token: string,
+  payload: {
+    description: string;
+    amount: number;
+    paymentMethod: PaymentMethod;
+    type: TransactionType;
   }
+): Promise<TransactionRecord> {
+  const data = await apiRequest<{ item: TransactionRecord }>('/api/transactions', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({
+      ...payload,
+      dateKey: getLocalDateKey(new Date()),
+    }),
+  });
+  return data.item;
+}
+
+export async function deleteTransactionApi(token: string, id: string): Promise<void> {
+  await apiRequest<{ ok: boolean }>(`/api/transactions/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function deleteSavedDescriptionApi(token: string, id: string): Promise<void> {
+  await apiRequest<{ ok: boolean }>(`/api/descriptions/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    token,
+  });
 }

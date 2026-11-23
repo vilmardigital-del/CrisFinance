@@ -1,20 +1,20 @@
-import { useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
+import { useCallback, useEffect, useState } from 'react';
 import { LogOut } from 'lucide-react';
+import { AuthScreen } from './components/AuthScreen';
 import { DateListPage } from './components/DateListPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LaunchPage } from './components/LaunchPage';
 import { ReportsPage } from './components/ReportsPage';
-import { auth, googleProvider } from './firebase';
 import {
-  createTransactionWithSavedDescription,
-  removeSavedDescription,
-  removeTransaction,
-  subscribeSavedDescriptions,
-  subscribeTransactions,
+  createTransactionApi,
+  deleteSavedDescriptionApi,
+  deleteTransactionApi,
+  fetchSavedDescriptionsApi,
+  fetchTransactionsApi,
 } from './services/financeService';
 import {
   AppPage,
+  AuthUser,
   PaymentMethod,
   SavedDescriptionRecord,
   TransactionRecord,
@@ -22,76 +22,48 @@ import {
 } from './types';
 
 function CrisFinanceApp() {
-  const [user, setUser] = useState<User | null>(null);
-  const [authReady, setAuthReady] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [signingIn, setSigningIn] = useState(false);
+  const [token, setToken] = useState<string | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
 
   const [activePage, setActivePage] = useState<AppPage>('lancamento');
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [savedDescriptions, setSavedDescriptions] = useState<SavedDescriptionRecord[]>([]);
-  const [loadingData, setLoadingData] = useState(true);
+  const [loadingData, setLoadingData] = useState(false);
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setAuthReady(true);
-      if (!currentUser) {
-        setTransactions([]);
-        setSavedDescriptions([]);
-        setLoadingData(false);
-      }
-    });
-    return () => unsubscribe();
+  const refreshData = useCallback(async (authToken: string) => {
+    setLoadingData(true);
+    try {
+      const [txList, descList] = await Promise.all([
+        fetchTransactionsApi(authToken),
+        fetchSavedDescriptionsApi(authToken),
+      ]);
+      setTransactions(txList);
+      setSavedDescriptions(descList);
+    } finally {
+      setLoadingData(false);
+    }
   }, []);
 
   useEffect(() => {
-    if (!authReady || !user) return;
-
-    setLoadingData(true);
-    let txLoaded = false;
-    let descLoaded = false;
-
-    const markLoaded = () => {
-      if (txLoaded && descLoaded) {
-        setLoadingData(false);
-      }
-    };
-
-    const unsubTx = subscribeTransactions(user.uid, (items) => {
-      setTransactions(items);
-      txLoaded = true;
-      markLoaded();
-    });
-
-    const unsubDesc = subscribeSavedDescriptions(user.uid, (items) => {
-      setSavedDescriptions(items);
-      descLoaded = true;
-      markLoaded();
-    });
-
-    return () => {
-      unsubTx();
-      unsubDesc();
-    };
-  }, [authReady, user]);
-
-  const handleGoogleSignIn = async () => {
-    setAuthError(null);
-    setSigningIn(true);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      setAuthError(
-        error instanceof Error ? error.message : 'Não foi possível entrar.'
-      );
-    } finally {
-      setSigningIn(false);
+    if (!token) {
+      setTransactions([]);
+      setSavedDescriptions([]);
+      return;
     }
+    void refreshData(token);
+  }, [token, refreshData]);
+
+  const handleAuthenticated = (newToken: string, authUser: AuthUser) => {
+    setToken(newToken);
+    setUser(authUser);
+    setActivePage('lancamento');
   };
 
-  const handleSignOut = async () => {
-    await signOut(auth);
+  const handleSignOut = () => {
+    setToken(null);
+    setUser(null);
+    setTransactions([]);
+    setSavedDescriptions([]);
   };
 
   const handleSaveTransaction = async (payload: {
@@ -100,56 +72,25 @@ function CrisFinanceApp() {
     paymentMethod: PaymentMethod;
     type: TransactionType;
   }) => {
-    if (!user) return;
-    await createTransactionWithSavedDescription({
-      userId: user.uid,
-      ...payload,
-    });
+    if (!token) return;
+    await createTransactionApi(token, payload);
+    await refreshData(token);
   };
 
   const handleDeleteTransaction = async (id: string) => {
-    if (!user) return;
-    await removeTransaction(user.uid, id);
+    if (!token) return;
+    await deleteTransactionApi(token, id);
+    await refreshData(token);
   };
 
   const handleDeleteSavedDescription = async (id: string) => {
-    if (!user) return;
-    await removeSavedDescription(user.uid, id);
+    if (!token) return;
+    await deleteSavedDescriptionApi(token, id);
+    await refreshData(token);
   };
 
-  if (!authReady) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="w-full max-w-sm bg-white border border-slate-200 rounded-xl p-8 space-y-6 text-center">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            CrisFinance
-          </h1>
-
-          <button
-            type="button"
-            disabled={signingIn}
-            onClick={() => void handleGoogleSignIn()}
-            className="w-full min-h-[48px] px-5 py-3 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer disabled:opacity-60"
-          >
-            {signingIn ? 'Entrando...' : 'Entrar com Google'}
-          </button>
-
-          {authError && (
-            <p role="alert" className="text-xs text-rose-700 break-words">
-              {authError}
-            </p>
-          )}
-        </div>
-      </div>
-    );
+  if (!token || !user) {
+    return <AuthScreen onAuthenticated={handleAuthenticated} />;
   }
 
   const navItems: { id: AppPage; label: string }[] = [
@@ -193,10 +134,11 @@ function CrisFinanceApp() {
             })}
           </nav>
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center shrink-0">
             <button
               type="button"
-              onClick={() => void handleSignOut()}
+              title={user.email}
+              onClick={handleSignOut}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 hover:text-slate-900 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -205,7 +147,6 @@ function CrisFinanceApp() {
           </div>
         </div>
 
-        {/* Navegação móvel compacta */}
         <nav
           aria-label="Navegação móvel"
           className="md:hidden border-t border-slate-200 px-4 flex items-center gap-4 overflow-x-auto"
