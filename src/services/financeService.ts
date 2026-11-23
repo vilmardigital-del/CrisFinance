@@ -28,34 +28,26 @@ async function apiRequest<T>(
   return data;
 }
 
-export async function verifyEmailVirtuallyApi(email: string): Promise<{
-  valid: boolean;
-  email?: string;
-  domain?: string;
-  mxHost?: string;
-  error?: string;
+export async function verifyGoogleEmailApi(accessToken: string): Promise<{
+  email: string;
+  domain: string;
+  alreadyRegistered: boolean;
+  verificationProof: string;
 }> {
-  const response = await fetch('/api/auth/verify-email', {
+  return apiRequest('/api/auth/verify-google', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ accessToken }),
   });
-  return (await response.json()) as {
-    valid: boolean;
-    email?: string;
-    domain?: string;
-    mxHost?: string;
-    error?: string;
-  };
 }
 
 export async function registerUserApi(
   email: string,
-  password: string
+  password: string,
+  verificationProof: string
 ): Promise<{ token: string; user: AuthUser }> {
   return apiRequest<{ token: string; user: AuthUser }>('/api/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, verificationProof }),
   });
 }
 
@@ -69,26 +61,22 @@ export async function loginUserApi(
   });
 }
 
-export async function requestPasswordResetApi(email: string): Promise<{
-  ok: boolean;
-  delivery: 'email' | 'virtual';
-  email: string;
-  virtualCode?: string;
-}> {
-  return apiRequest('/api/auth/forgot-password', {
+export async function googleLoginApi(
+  accessToken: string
+): Promise<{ token: string; user: AuthUser }> {
+  return apiRequest<{ token: string; user: AuthUser }>('/api/auth/google-login', {
     method: 'POST',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ accessToken }),
   });
 }
 
-export async function resetPasswordApi(params: {
-  email: string;
-  code: string;
-  newPassword: string;
-}): Promise<{ ok: boolean; token: string; user: AuthUser }> {
-  return apiRequest('/api/auth/reset-password', {
+export async function resetPasswordWithGoogleApi(
+  accessToken: string,
+  newPassword: string
+): Promise<{ ok: boolean; token: string; user: AuthUser }> {
+  return apiRequest('/api/auth/reset-password-google', {
     method: 'POST',
-    body: JSON.stringify(params),
+    body: JSON.stringify({ accessToken, newPassword }),
   });
 }
 

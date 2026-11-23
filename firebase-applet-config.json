@@ -1,12 +1,11 @@
 {
-  "projectId": "gen-lang-client-0143004813",
-  "appId": "1:605261067014:web:94f05b1344515bfa57e487",
-  "apiKey": "AIzaSyBcmltRkOXhaWv9LkDxVdzakZZ3gVUFpvY",
-  "authDomain": "gen-lang-client-0143004813.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-f070541d-aef4-4de4-8e13-6159506fd20c",
-  "storageBucket": "gen-lang-client-0143004813.firebasestorage.app",
-  "messagingSenderId": "605261067014",
+  "projectId": "hinata-301400",
+  "appId": "1:884964535241:web:9b6ba30a67889e3ad91618",
+  "apiKey": "AIzaSyAbxqpa0kqgEHugtKFTbs3O7WhZDYiLxJY",
+  "authDomain": "hinata-301400.firebaseapp.com",
+  "storageBucket": "hinata-301400.firebasestorage.app",
+  "messagingSenderId": "884964535241",
   "measurementId": "",
-  "oAuthClientId": "605261067014-ld91i388t65bkqb8r2saqfgovdgpou76.apps.googleusercontent.com",
+  "oAuthClientId": "884964535241-4vra9io0pqi7cgo49cac0r9hciqb4c72.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }
