@@ -1,0 +1,124 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    function isValidPaymentMethod(method) {
+      return method in ['pix', 'moeda', 'debito', 'credito', 'boleto'];
+    }
+
+    function isValidTransactionType(txType) {
+      return txType in ['entrada', 'saida'];
+    }
+
+    function isValidDateKey(dateKey) {
+      return dateKey is string && dateKey.size() == 10 && dateKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    function isValidTransaction(data, userId) {
+      return data.keys().hasAll(['userId', 'description', 'amount', 'paymentMethod', 'type', 'dateKey', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'description', 'amount', 'paymentMethod', 'type', 'dateKey', 'createdAt'])
+        && data.userId is string
+        && data.userId.size() >= 1
+        && data.userId.size() <= 128
+        && data.userId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && data.description is string
+        && data.description.size() >= 1
+        && data.description.size() <= 120
+        && data.amount is number
+        && data.amount > 0
+        && data.amount <= 999999999
+        && isValidPaymentMethod(data.paymentMethod)
+        && isValidTransactionType(data.type)
+        && isValidDateKey(data.dateKey)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSavedDescription(data, userId) {
+      return data.keys().hasAll(['userId', 'text', 'lastUsedAt', 'usageCount'])
+        && data.keys().hasOnly(['userId', 'text', 'lastUsedAt', 'usageCount'])
+        && data.userId is string
+        && data.userId.size() >= 1
+        && data.userId.size() <= 128
+        && data.userId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && data.text is string
+        && data.text.size() >= 1
+        && data.text.size() <= 120
+        && data.lastUsedAt is timestamp
+        && data.usageCount is int
+        && data.usageCount >= 1
+        && data.usageCount <= 1000000;
+    }
+
+    match /users/{userId}/transactions/{transactionId} {
+      allow get: if isValidId(userId) && isValidId(transactionId) && isOwner(userId) && (resource == null || existing().userId == request.auth.uid);
+      allow list: if isValidId(userId) && isOwner(userId) && resource.data.userId == request.auth.uid;
+      allow create: if isValidId(userId)
+        && isValidId(transactionId)
+        && isOwner(userId)
+        && isValidTransaction(incoming(), userId)
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(userId)
+        && isValidId(transactionId)
+        && isOwner(userId)
+        && isValidTransaction(incoming(), userId)
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['description', 'amount', 'paymentMethod', 'type']);
+      allow delete: if isValidId(userId) && isValidId(transactionId) && isOwner(userId) && existing().userId == request.auth.uid;
+    }
+
+    match /users/{userId}/descriptions/{descriptionId} {
+      allow get: if isValidId(userId) && isValidId(descriptionId) && isOwner(userId) && (resource == null || existing().userId == request.auth.uid);
+      allow list: if isValidId(userId) && isOwner(userId) && resource.data.userId == request.auth.uid;
+      allow create: if isValidId(userId)
+        && isValidId(descriptionId)
+        && isOwner(userId)
+        && isValidSavedDescription(incoming(), userId)
+        && incoming().lastUsedAt == request.time
+        && incoming().usageCount == 1;
+      allow update: if isValidId(userId)
+        && isValidId(descriptionId)
+        && isOwner(userId)
+        && isValidSavedDescription(incoming(), userId)
+        && incoming().userId == existing().userId
+        && incoming().text == existing().text
+        && incoming().lastUsedAt == request.time
+        && incoming().usageCount == existing().usageCount + 1
+        && incoming().diff(existing()).affectedKeys().hasOnly(['lastUsedAt', 'usageCount']);
+      allow delete: if isValidId(userId) && isValidId(descriptionId) && isOwner(userId) && existing().userId == request.auth.uid;
+    }
+  }
+}

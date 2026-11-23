@@ -1,0 +1,99 @@
+{
+  "entities": {
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial entry or expense record launched by a user.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner UID matching Firebase Auth.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Service or expense description used as category.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "amount": {
+          "type": "number",
+          "description": "Monetary value in BRL (> 0)."
+        },
+        "paymentMethod": {
+          "type": "string",
+          "description": "Payment method selected in Popup 1.",
+          "enum": ["pix", "moeda", "debito", "credito", "boleto"]
+        },
+        "type": {
+          "type": "string",
+          "description": "Cashflow direction selected in Popup 2.",
+          "enum": ["entrada", "saida"]
+        },
+        "dateKey": {
+          "type": "string",
+          "description": "Local date string in YYYY-MM-DD format for grouping.",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the launch."
+        }
+      },
+      "required": [
+        "userId",
+        "description",
+        "amount",
+        "paymentMethod",
+        "type",
+        "dateKey",
+        "createdAt"
+      ]
+    },
+    "SavedDescription": {
+      "title": "SavedDescription",
+      "description": "Reusable service or expense description saved for quick reuse.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner UID matching Firebase Auth.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "text": {
+          "type": "string",
+          "description": "Saved description text.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "lastUsedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last used."
+        },
+        "usageCount": {
+          "type": "number",
+          "description": "Number of times this description has been used."
+        }
+      },
+      "required": ["userId", "text", "lastUsedAt", "usageCount"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Private user financial transactions."
+    },
+    "/users/{userId}/descriptions/{descriptionId}": {
+      "schema": { "$ref": "#/entities/SavedDescription" },
+      "description": "Private user saved service descriptions."
+    }
+  }
+}

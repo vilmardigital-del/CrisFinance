@@ -1,0 +1,6 @@
+{
+  "name": "CrisFinance",
+  "description": "Aplicativo financeiro simples para lançamento rápido de entradas e saídas, lista por data e relatórios por categoria.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
