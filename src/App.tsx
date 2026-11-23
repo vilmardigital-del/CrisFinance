@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LogOut } from 'lucide-react';
 import { AuthScreen } from './components/AuthScreen';
+import { BrandLogo } from './components/BrandLogo';
 import { DateListPage } from './components/DateListPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LaunchPage } from './components/LaunchPage';
@@ -106,9 +107,10 @@ function CrisFinanceApp() {
           <button
             type="button"
             onClick={() => setActivePage('lancamento')}
-            className="text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0 cursor-pointer"
+            className="inline-flex items-center gap-2.5 text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0 cursor-pointer"
           >
-            CrisFinance
+            <BrandLogo size="sm" />
+            <span>CrisFinance</span>
           </button>
 
           <nav

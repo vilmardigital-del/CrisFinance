@@ -8,6 +8,7 @@ import {
   verifyEmailVirtuallyApi,
 } from '../services/financeService';
 import { AuthUser } from '../types';
+import { BrandLogo } from './BrandLogo';
 
 interface AuthScreenProps {
   onAuthenticated: (token: string, user: AuthUser) => void;
@@ -170,7 +171,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
       <div className="w-full max-w-md bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-6 py-5 border-b border-slate-200 text-center">
+        <div className="px-6 py-6 border-b border-slate-200 flex flex-col items-center gap-3 text-center">
+          <BrandLogo size="lg" />
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
             CrisFinance
           </h1>
