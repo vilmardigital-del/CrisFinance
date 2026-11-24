@@ -16,24 +16,6 @@ const SESSION_SECRET =
     ? process.env.SESSION_SECRET.trim()
     : crypto.randomBytes(32).toString('hex');
 
-const OAUTH_CONFIG_PATH = path.resolve(process.cwd(), 'google-oauth-config.json');
-let GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_CLIENT_ID?.trim() ?? '';
-let GOOGLE_PROJECT_NUMBER = '';
-if (fs.existsSync(OAUTH_CONFIG_PATH)) {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(OAUTH_CONFIG_PATH, 'utf8')) as {
-      clientId?: string;
-      projectNumber?: string;
-    };
-    if (!GOOGLE_OAUTH_CLIENT_ID) {
-      GOOGLE_OAUTH_CLIENT_ID = parsed.clientId?.trim() ?? '';
-    }
-    GOOGLE_PROJECT_NUMBER = parsed.projectNumber?.trim() ?? '';
-  } catch {
-    GOOGLE_PROJECT_NUMBER = '';
-  }
-}
-
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -227,125 +209,6 @@ async function verifyEmailVirtually(rawEmail: unknown): Promise<{
   };
 }
 
-async function verifyGoogleAccessToken(accessToken: string): Promise<{
-  ok: boolean;
-  email?: string;
-  domain?: string;
-  reason?: string;
-}> {
-  if (!accessToken || accessToken.length > 4096) {
-    return { ok: false, reason: 'Token do Google inválido.' };
-  }
-
-  try {
-    const tokenInfoUrl = `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`;
-    const tokenInfoRes = await fetch(tokenInfoUrl);
-    if (!tokenInfoRes.ok) {
-      return { ok: false, reason: 'Não foi possível validar o token com a Google.' };
-    }
-
-    const tokenInfo = (await tokenInfoRes.json()) as {
-      aud?: string;
-      azp?: string;
-      email?: string;
-      email_verified?: string | boolean;
-    };
-
-    if (GOOGLE_OAUTH_CLIENT_ID || GOOGLE_PROJECT_NUMBER) {
-      const aud = tokenInfo.aud || '';
-      const azp = tokenInfo.azp || '';
-      const matchesClient =
-        (GOOGLE_OAUTH_CLIENT_ID && (aud === GOOGLE_OAUTH_CLIENT_ID || azp === GOOGLE_OAUTH_CLIENT_ID)) ||
-        (GOOGLE_PROJECT_NUMBER &&
-          (aud.startsWith(`${GOOGLE_PROJECT_NUMBER}-`) || azp.startsWith(`${GOOGLE_PROJECT_NUMBER}-`)));
-      if (!matchesClient) {
-        return { ok: false, reason: 'Token não pertence a este aplicativo.' };
-      }
-    }
-
-    const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!userInfoRes.ok) {
-      return { ok: false, reason: 'Falha ao consultar dados do e-mail na Google.' };
-    }
-
-    const userInfo = (await userInfoRes.json()) as {
-      email?: string;
-      email_verified?: boolean;
-    };
-
-    const email = normalizeEmail(userInfo.email || tokenInfo.email);
-    const verified =
-      userInfo.email_verified === true ||
-      tokenInfo.email_verified === true ||
-      tokenInfo.email_verified === 'true';
-
-    if (!email || !verified) {
-      return { ok: false, reason: 'E-mail não verificado na conta Google.' };
-    }
-
-    const domain = email.split('@')[1] || 'gmail.com';
-    return { ok: true, email, domain };
-  } catch {
-    return { ok: false, reason: 'Erro ao se comunicar com os servidores da Google.' };
-  }
-}
-
-function signGoogleVerificationProof(email: string, domain: string): string {
-  const payload = {
-    purpose: 'google_email_verified',
-    email,
-    domain,
-    exp: Date.now() + 15 * 60 * 1000,
-  };
-  const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-  const signature = crypto
-    .createHmac('sha256', SESSION_SECRET)
-    .update(encodedPayload)
-    .digest('base64url');
-  return `${encodedPayload}.${signature}`;
-}
-
-function verifyGoogleVerificationProof(proof: string): { email: string; domain: string } | null {
-  const parts = proof.split('.');
-  if (parts.length !== 2) return null;
-  const [encodedPayload, providedSig] = parts;
-  if (!encodedPayload || !providedSig) return null;
-
-  const expectedSig = crypto
-    .createHmac('sha256', SESSION_SECRET)
-    .update(encodedPayload)
-    .digest('base64url');
-
-  const a = Buffer.from(providedSig, 'utf8');
-  const b = Buffer.from(expectedSig, 'utf8');
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    return null;
-  }
-
-  try {
-    const decoded = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as {
-      purpose?: string;
-      email?: string;
-      domain?: string;
-      exp?: number;
-    };
-    if (
-      decoded.purpose !== 'google_email_verified' ||
-      !decoded.email ||
-      !decoded.domain ||
-      !decoded.exp ||
-      decoded.exp < Date.now()
-    ) {
-      return null;
-    }
-    return { email: decoded.email, domain: decoded.domain };
-  } catch {
-    return null;
-  }
-}
-
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
   const derived = crypto.scryptSync(password, salt, 64).toString('hex');
@@ -494,46 +357,23 @@ async function startServer() {
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '64kb' }));
 
-  app.get('/api/auth/google-config', (_req: Request, res: Response) => {
-    res.json({ clientId: GOOGLE_OAUTH_CLIENT_ID });
+  app.post('/api/auth/verify-email', authRateLimiter, async (req: Request, res: Response) => {
+    const check = await verifyEmailVirtually(req.body?.email);
+    if (!check.valid) {
+      res.status(400).json({ valid: false, error: check.reason });
+      return;
+    }
+    res.json({ valid: true, email: check.email, domain: check.domain, mxHost: check.mxHost });
   });
 
-  // Verifica e-mail diretamente com Google OAuth e emite prova assinada
-  app.post('/api/auth/verify-google', authRateLimiter, async (req: Request, res: Response) => {
-    const accessToken = typeof req.body?.accessToken === 'string' ? req.body.accessToken.trim() : '';
-    const check = await verifyGoogleAccessToken(accessToken);
-    if (!check.ok || !check.email || !check.domain) {
-      res.status(400).json({ error: check.reason || 'Falha na verificação com a Google.' });
+  app.post('/api/auth/register', authRateLimiter, async (req: Request, res: Response) => {
+    const emailCheck = await verifyEmailVirtually(req.body?.email);
+    if (!emailCheck.valid) {
+      res.status(400).json({ error: emailCheck.reason || 'E-mail inválido.' });
       return;
     }
 
-    const existing = db
-      .prepare('SELECT id FROM users WHERE email = ?')
-      .get(check.email) as { id: string } | undefined;
-
-    const verificationProof = signGoogleVerificationProof(check.email, check.domain);
-    res.json({
-      email: check.email,
-      domain: check.domain,
-      alreadyRegistered: Boolean(existing),
-      verificationProof,
-    });
-  });
-
-  app.post('/api/auth/register', authRateLimiter, (req: Request, res: Response) => {
-    const email = normalizeEmail(req.body?.email);
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const verificationProof =
-      typeof req.body?.verificationProof === 'string' ? req.body.verificationProof.trim() : '';
-
-    const verifiedGoogle = verifyGoogleVerificationProof(verificationProof);
-    if (!verifiedGoogle || verifiedGoogle.email !== email) {
-      res.status(403).json({
-        error: 'É obrigatório validar o e-mail na conta Google antes de cadastrar.',
-      });
-      return;
-    }
-
     if (password.length < 6 || password.length > 128) {
       res.status(400).json({ error: 'A senha deve ter entre 6 e 128 caracteres.' });
       return;
@@ -541,9 +381,9 @@ async function startServer() {
 
     const existing = db
       .prepare('SELECT id FROM users WHERE email = ?')
-      .get(verifiedGoogle.email) as { id: string } | undefined;
+      .get(emailCheck.email) as { id: string } | undefined;
     if (existing) {
-      res.status(409).json({ error: 'Este e-mail já está cadastrado. Use a aba Entrar.' });
+      res.status(409).json({ error: 'Este e-mail já está cadastrado.' });
       return;
     }
 
@@ -553,12 +393,12 @@ async function startServer() {
 
     db.prepare(
       'INSERT INTO users (id, email, password_hash, email_verified, mx_domain, created_at) VALUES (?, ?, ?, 1, ?, ?)'
-    ).run(userId, verifiedGoogle.email, passwordHash, verifiedGoogle.domain, createdAt);
+    ).run(userId, emailCheck.email, passwordHash, emailCheck.domain, createdAt);
 
     const user: AuthenticatedUser = {
       id: userId,
-      email: verifiedGoogle.email,
-      mxDomain: verifiedGoogle.domain,
+      email: emailCheck.email,
+      mxDomain: emailCheck.domain,
     };
     const token = signAuthToken(user);
     res.status(201).json({ token, user });
@@ -590,70 +430,6 @@ async function startServer() {
     res.json({ token, user });
   });
 
-  app.post('/api/auth/google-login', authRateLimiter, async (req: Request, res: Response) => {
-    const accessToken = typeof req.body?.accessToken === 'string' ? req.body.accessToken.trim() : '';
-    const check = await verifyGoogleAccessToken(accessToken);
-    if (!check.ok || !check.email) {
-      res.status(401).json({ error: check.reason || 'Conta Google inválida.' });
-      return;
-    }
-
-    const row = db
-      .prepare('SELECT id, email, mx_domain FROM users WHERE email = ?')
-      .get(check.email) as { id: string; email: string; mx_domain: string } | undefined;
-
-    if (!row) {
-      res.status(404).json({
-        error: 'E-mail ainda não cadastrado. Crie sua senha na aba Criar conta.',
-      });
-      return;
-    }
-
-    const user: AuthenticatedUser = {
-      id: row.id,
-      email: row.email,
-      mxDomain: row.mx_domain,
-    };
-    const token = signAuthToken(user);
-    res.json({ token, user });
-  });
-
-  app.post('/api/auth/reset-password-google', authRateLimiter, async (req: Request, res: Response) => {
-    const accessToken = typeof req.body?.accessToken === 'string' ? req.body.accessToken.trim() : '';
-    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
-
-    if (newPassword.length < 6 || newPassword.length > 128) {
-      res.status(400).json({ error: 'A nova senha deve ter entre 6 e 128 caracteres.' });
-      return;
-    }
-
-    const check = await verifyGoogleAccessToken(accessToken);
-    if (!check.ok || !check.email) {
-      res.status(401).json({ error: check.reason || 'Falha ao validar a conta Google.' });
-      return;
-    }
-
-    const row = db
-      .prepare('SELECT id, email, mx_domain FROM users WHERE email = ?')
-      .get(check.email) as { id: string; email: string; mx_domain: string } | undefined;
-
-    if (!row) {
-      res.status(404).json({ error: 'Conta não encontrada para este e-mail Google.' });
-      return;
-    }
-
-    const newHash = hashPassword(newPassword);
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, row.id);
-
-    const user: AuthenticatedUser = {
-      id: row.id,
-      email: row.email,
-      mxDomain: row.mx_domain,
-    };
-    const token = signAuthToken(user);
-    res.json({ ok: true, token, user });
-  });
-
   app.get('/api/auth/me', requireAuth, (req: RequestWithUser, res: Response) => {
     res.json({ user: req.authUser });
   });
@@ -674,14 +450,6 @@ async function startServer() {
       return;
     }
 
-    const hasResend = Boolean(process.env.RESEND_API_KEY?.trim());
-    if (!hasResend) {
-      res.status(400).json({
-        error: 'Use a confirmação direta com a conta Google para redefinir sua senha.',
-      });
-      return;
-    }
-
     const code = String(crypto.randomInt(100000, 1000000));
     const resetId = crypto.randomUUID();
     const codeHash = hashRecoveryCode(userRow.id, code);
@@ -692,12 +460,23 @@ async function startServer() {
       'INSERT INTO password_resets (id, user_id, code_hash, attempts, expires_at, used) VALUES (?, ?, ?, 0, ?, 0)'
     ).run(resetId, userRow.id, codeHash, expiresAt);
 
-    const sent = await sendRecoveryEmailViaResend(userRow.email, code);
-    if (!sent) {
-      res.status(502).json({ error: 'Falha ao enviar o e-mail de recuperação.' });
+    const hasResend = Boolean(process.env.RESEND_API_KEY?.trim());
+    if (hasResend) {
+      const sent = await sendRecoveryEmailViaResend(userRow.email, code);
+      if (!sent) {
+        res.status(502).json({ error: 'Falha ao enviar o e-mail de recuperação.' });
+        return;
+      }
+      res.json({ ok: true, delivery: 'email', email: userRow.email });
       return;
     }
-    res.json({ ok: true, delivery: 'email', email: userRow.email });
+
+    res.json({
+      ok: true,
+      delivery: 'virtual',
+      email: userRow.email,
+      virtualCode: code,
+    });
   });
 
   app.post('/api/auth/reset-password', authRateLimiter, (req: Request, res: Response) => {
@@ -762,7 +541,6 @@ async function startServer() {
     res.json({ ok: true, token, user });
   });
 
-  // Protected financial data routes
   app.get('/api/transactions', requireAuth, (req: RequestWithUser, res: Response) => {
     const userId = req.authUser!.id;
     const rows = db
