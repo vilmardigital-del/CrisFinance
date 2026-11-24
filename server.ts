@@ -16,19 +16,20 @@ const SESSION_SECRET =
     ? process.env.SESSION_SECRET.trim()
     : crypto.randomBytes(32).toString('hex');
 
-const FIREBASE_CONFIG_PATH = path.resolve(process.cwd(), 'firebase-applet-config.json');
-let GOOGLE_OAUTH_CLIENT_ID = '';
+const OAUTH_CONFIG_PATH = path.resolve(process.cwd(), 'google-oauth-config.json');
+let GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_CLIENT_ID?.trim() ?? '';
 let GOOGLE_PROJECT_NUMBER = '';
-if (fs.existsSync(FIREBASE_CONFIG_PATH)) {
+if (fs.existsSync(OAUTH_CONFIG_PATH)) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(FIREBASE_CONFIG_PATH, 'utf8')) as {
-      oAuthClientId?: string;
-      messagingSenderId?: string;
+    const parsed = JSON.parse(fs.readFileSync(OAUTH_CONFIG_PATH, 'utf8')) as {
+      clientId?: string;
+      projectNumber?: string;
     };
-    GOOGLE_OAUTH_CLIENT_ID = parsed.oAuthClientId?.trim() ?? '';
-    GOOGLE_PROJECT_NUMBER = parsed.messagingSenderId?.trim() ?? '';
+    if (!GOOGLE_OAUTH_CLIENT_ID) {
+      GOOGLE_OAUTH_CLIENT_ID = parsed.clientId?.trim() ?? '';
+    }
+    GOOGLE_PROJECT_NUMBER = parsed.projectNumber?.trim() ?? '';
   } catch {
-    GOOGLE_OAUTH_CLIENT_ID = '';
     GOOGLE_PROJECT_NUMBER = '';
   }
 }
@@ -492,6 +493,10 @@ async function startServer() {
   const app = express();
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '64kb' }));
+
+  app.get('/api/auth/google-config', (_req: Request, res: Response) => {
+    res.json({ clientId: GOOGLE_OAUTH_CLIENT_ID });
+  });
 
   // Verifica e-mail diretamente com Google OAuth e emite prova assinada
   app.post('/api/auth/verify-google', authRateLimiter, async (req: Request, res: Response) => {
