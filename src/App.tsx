@@ -7,11 +7,14 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { LaunchPage } from './components/LaunchPage';
 import { ReportsPage } from './components/ReportsPage';
 import {
+  ApiError,
   createTransactionApi,
   deleteSavedDescriptionApi,
   deleteTransactionApi,
   fetchSavedDescriptionsApi,
   fetchTransactionsApi,
+  logoutSessionApi,
+  restoreSessionApi,
 } from './services/financeService';
 import {
   AppPage,
@@ -23,27 +26,49 @@ import {
 } from './types';
 
 function CrisFinanceApp() {
-  const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [initialSession] = useState(() => restoreSessionApi());
+  const [token, setToken] = useState<string | null>(initialSession?.token ?? null);
+  const [user, setUser] = useState<AuthUser | null>(initialSession?.user ?? null);
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
 
   const [activePage, setActivePage] = useState<AppPage>('lancamento');
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [savedDescriptions, setSavedDescriptions] = useState<SavedDescriptionRecord[]>([]);
   const [loadingData, setLoadingData] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
 
-  const refreshData = useCallback(async (authToken: string) => {
-    setLoadingData(true);
-    try {
-      const [txList, descList] = await Promise.all([
-        fetchTransactionsApi(authToken),
-        fetchSavedDescriptionsApi(authToken),
-      ]);
-      setTransactions(txList);
-      setSavedDescriptions(descList);
-    } finally {
-      setLoadingData(false);
+  const handleApiFailure = useCallback((err: unknown) => {
+    if (err instanceof ApiError && err.status === 401) {
+      logoutSessionApi();
+      setToken(null);
+      setUser(null);
+      setTransactions([]);
+      setSavedDescriptions([]);
+      setSessionNotice('Sua sessão expirou. Entre novamente.');
+      return;
     }
+    setDataError(err instanceof Error ? err.message : 'Erro ao processar os dados.');
   }, []);
+
+  const refreshData = useCallback(
+    async (authToken: string) => {
+      setLoadingData(true);
+      setDataError(null);
+      try {
+        const [txList, descList] = await Promise.all([
+          fetchTransactionsApi(authToken),
+          fetchSavedDescriptionsApi(authToken),
+        ]);
+        setTransactions(txList);
+        setSavedDescriptions(descList);
+      } catch (err) {
+        handleApiFailure(err);
+      } finally {
+        setLoadingData(false);
+      }
+    },
+    [handleApiFailure]
+  );
 
   useEffect(() => {
     if (!token) {
@@ -55,12 +80,17 @@ function CrisFinanceApp() {
   }, [token, refreshData]);
 
   const handleAuthenticated = (newToken: string, authUser: AuthUser) => {
+    setSessionNotice(null);
+    setDataError(null);
     setToken(newToken);
     setUser(authUser);
     setActivePage('lancamento');
   };
 
   const handleSignOut = () => {
+    logoutSessionApi();
+    setSessionNotice(null);
+    setDataError(null);
     setToken(null);
     setUser(null);
     setTransactions([]);
@@ -74,24 +104,37 @@ function CrisFinanceApp() {
     type: TransactionType;
   }) => {
     if (!token) return;
-    await createTransactionApi(token, payload);
-    await refreshData(token);
+    try {
+      await createTransactionApi(token, payload);
+      await refreshData(token);
+    } catch (err) {
+      handleApiFailure(err);
+      throw err;
+    }
   };
 
   const handleDeleteTransaction = async (id: string) => {
     if (!token) return;
-    await deleteTransactionApi(token, id);
-    await refreshData(token);
+    try {
+      await deleteTransactionApi(token, id);
+      await refreshData(token);
+    } catch (err) {
+      handleApiFailure(err);
+    }
   };
 
   const handleDeleteSavedDescription = async (id: string) => {
     if (!token) return;
-    await deleteSavedDescriptionApi(token, id);
-    await refreshData(token);
+    try {
+      await deleteSavedDescriptionApi(token, id);
+      await refreshData(token);
+    } catch (err) {
+      handleApiFailure(err);
+    }
   };
 
   if (!token || !user) {
-    return <AuthScreen onAuthenticated={handleAuthenticated} />;
+    return <AuthScreen onAuthenticated={handleAuthenticated} initialNotice={sessionNotice} />;
   }
 
   const navItems: { id: AppPage; label: string }[] = [
@@ -174,6 +217,22 @@ function CrisFinanceApp() {
       </header>
 
       <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 py-8">
+        {dataError && (
+          <div
+            role="alert"
+            className="mb-6 px-4 py-3 bg-rose-50 border border-rose-200 rounded-lg flex items-center justify-between gap-4 text-sm text-rose-800"
+          >
+            <span>{dataError}</span>
+            <button
+              type="button"
+              onClick={() => token && void refreshData(token)}
+              className="text-xs font-semibold underline shrink-0 cursor-pointer"
+            >
+              Tentar novamente
+            </button>
+          </div>
+        )}
+
         {activePage === 'lancamento' && (
           <LaunchPage
             transactions={transactions}

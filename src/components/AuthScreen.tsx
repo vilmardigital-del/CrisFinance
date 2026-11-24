@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { CheckCircle2, Eye, EyeOff, ShieldAlert } from 'lucide-react';
 import {
   loginUserApi,
@@ -12,11 +12,15 @@ import { BrandLogo } from './BrandLogo';
 
 interface AuthScreenProps {
   onAuthenticated: (token: string, user: AuthUser) => void;
+  initialNotice?: string | null;
 }
 
 type AuthMode = 'login' | 'register' | 'forgot';
 
-export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
+export const AuthScreen: React.FC<AuthScreenProps> = ({
+  onAuthenticated,
+  initialNotice = null,
+}) => {
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -37,7 +41,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
   const [resetDeliveryInfo, setResetDeliveryInfo] = useState<string | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(initialNotice);
+
+  useEffect(() => {
+    if (initialNotice) {
+      setMode('login');
+      setErrorMsg(initialNotice);
+    }
+  }, [initialNotice]);
 
   const switchMode = (nextMode: AuthMode) => {
     setMode(nextMode);
@@ -109,8 +120,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
     e.preventDefault();
     setErrorMsg(null);
 
-    if (password.length < 6) {
-      setErrorMsg('A senha deve ter pelo menos 6 caracteres.');
+    if (!password) {
+      setErrorMsg('Informe uma senha.');
       return;
     }
     if (password !== confirmPassword) {
@@ -136,13 +147,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
     try {
       const res = await requestPasswordResetApi(email);
       setResetStep('confirm');
-      if (res.delivery === 'virtual' && res.virtualCode) {
-        setVirtualCodeDisplay(res.virtualCode);
-        setResetDeliveryInfo(`Verificação virtual enviada para ${res.email}`);
-      } else {
-        setVirtualCodeDisplay(null);
-        setResetDeliveryInfo(`Código enviado para ${res.email}`);
-      }
+      setVirtualCodeDisplay(res.virtualCode ?? null);
+      setResetDeliveryInfo(`Verificação virtual enviada para ${res.email}`);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Não foi possível iniciar a recuperação.');
     } finally {
@@ -210,16 +216,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
             <form onSubmit={(e) => void handleLoginSubmit(e)} className="space-y-4">
               <div className="space-y-1.5">
                 <label htmlFor="login-email" className="block text-sm font-medium text-slate-700">
-                  E-mail
+                  E-mail ou login
                 </label>
                 <input
                   id="login-email"
-                  type="email"
+                  type="text"
                   required
-                  autoComplete="email"
+                  autoComplete="username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="seu@email.com"
+                  placeholder="seu@email.com ou login"
                   className="w-full min-h-[44px] px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
                 />
               </div>
@@ -245,7 +251,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                     autoComplete="current-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••"
+                    placeholder="Sua senha"
                     className="w-full min-h-[44px] pl-3.5 pr-10 py-2 text-sm text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
                   />
                   <button
@@ -279,20 +285,20 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
             <form onSubmit={(e) => void handleRegisterSubmit(e)} className="space-y-4">
               <div className="space-y-1.5">
                 <label htmlFor="reg-email" className="block text-sm font-medium text-slate-700">
-                  E-mail
+                  E-mail ou login
                 </label>
                 <div className="flex gap-2">
                   <input
                     id="reg-email"
-                    type="email"
+                    type="text"
                     required
-                    autoComplete="email"
+                    autoComplete="username"
                     value={email}
                     onChange={(e) => {
                       setEmail(e.target.value);
                       setEmailVerification(null);
                     }}
-                    placeholder="seu@email.com"
+                    placeholder="seu@email.com ou login"
                     className="flex-1 min-h-[44px] px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
                   />
                   <button
@@ -330,11 +336,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                     id="reg-password"
                     type={showPassword ? 'text' : 'password'}
                     required
-                    minLength={6}
                     autoComplete="new-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Mínimo 6 caracteres"
+                    placeholder="Escolha uma senha"
                     className="w-full min-h-[44px] pl-3.5 pr-10 py-2 text-sm text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
                   />
                   <button
@@ -356,7 +361,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                   id="reg-confirm"
                   type={showPassword ? 'text' : 'password'}
                   required
-                  minLength={6}
                   autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
@@ -391,15 +395,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                 <form onSubmit={(e) => void handleRequestReset(e)} className="space-y-4">
                   <div className="space-y-1.5">
                     <label htmlFor="forgot-email" className="block text-sm font-medium text-slate-700">
-                      E-mail cadastrado
+                      E-mail ou login cadastrado
                     </label>
                     <input
                       id="forgot-email"
-                      type="email"
+                      type="text"
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="seu@email.com"
+                      placeholder="seu@email.com ou login"
                       className="w-full min-h-[44px] px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
                     />
                   </div>
@@ -423,7 +427,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                       disabled={submitting}
                       className="min-h-[44px] px-5 py-2 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer disabled:opacity-60"
                     >
-                      {submitting ? 'Enviando...' : 'Enviar código'}
+                      {submitting ? 'Gerando...' : 'Enviar código'}
                     </button>
                   </div>
                 </form>
@@ -467,10 +471,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                       id="reset-new-password"
                       type={showPassword ? 'text' : 'password'}
                       required
-                      minLength={6}
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Mínimo 6 caracteres"
+                      placeholder="Escolha a nova senha"
                       className="w-full min-h-[44px] px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
                     />
                   </div>
